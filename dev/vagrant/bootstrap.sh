@@ -2,11 +2,18 @@
 #
 # Bootstrap script to configure all nodes.
 #
+# This script is intended to be used by vagrant to provision nodes.
+# To use it, set it as 'PROVISION_SCRIPT' inside your Vagrantfile.custom.
+# You can use Vagrantfile.custom.example as a template for this.
+
+VM=$1
+MODE=$2
+KOLLA_PATH=$3
 
 export http_proxy=
 export https_proxy=
 
-if [ $2 = 'aio' ]; then
+if [ "$MODE" = 'aio' ]; then
     # Run registry on port 4000 since it may collide with keystone when doing AIO
     REGISTRY_PORT=4000
     SUPPORT_NODE=operator
@@ -15,28 +22,78 @@ else
     SUPPORT_NODE=support01
 fi
 REGISTRY=operator.local:${REGISTRY_PORT}
+ADMIN_PROTOCOL="http"
+
+function _ensure_lsb_release {
+    if [[ -x $(which lsb_release 2>/dev/null) ]]; then
+        return
+    fi
+
+    if [[ -x $(which apt-get 2>/dev/null) ]]; then
+        sudo apt-get install -y lsb-release
+    elif [[ -x $(which yum 2>/dev/null) ]]; then
+        sudo yum install -y redhat-lsb-core
+    fi
+}
+
+function _is_distro {
+    if [[ -z "$DISTRO" ]]; then
+        _ensure_lsb_release
+        DISTRO=$(lsb_release -si)
+    fi
+
+    [[ "$DISTRO" == "$1" ]]
+}
+
+function is_ubuntu {
+    _is_distro "Ubuntu"
+}
+
+function is_centos {
+    _is_distro "CentOS"
+}
 
 # Install common packages and do some prepwork.
 function prep_work {
-    systemctl stop firewalld
-    systemctl disable firewalld
+    if [[ "$(systemctl is-enabled firewalld)" = "enabled" ]]; then
+        systemctl stop firewalld
+        systemctl disable firewalld
+    fi
 
     # This removes the fqdn from /etc/hosts's 127.0.0.1. This name.local will
     # resolve to the public IP instead of localhost.
     sed -i -r "s/^(127\.0\.0\.1\s+)(.*) `hostname` (.+)/\1 \3/" /etc/hosts
 
-    yum install -y http://mirror.nl.leaseweb.net/epel/7/x86_64/e/epel-release-7-5.noarch.rpm
-    yum install -y MySQL-python vim-enhanced python-pip python-devel gcc openssl-devel libffi-devel libxml2-devel libxslt-devel && yum clean all
+    if is_centos; then
+        yum install -y epel-release
+        rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-7
+        yum install -y MySQL-python vim-enhanced python-pip python-devel gcc openssl-devel libffi-devel libxml2-devel libxslt-devel
+    elif is_ubuntu; then
+        apt-get update
+        apt-get install -y python-mysqldb python-pip python-dev build-essential libssl-dev libffi-dev libxml2-dev libxslt-dev
+    else
+        echo "Unsupported Distro: $DISTRO" 1>&2
+        exit 1
+    fi
+
     pip install --upgrade docker-py
+}
+
+# Do some cleanup after the installation of kolla
+function cleanup {
+    if is_centos; then
+        yum clean all
+    elif is_ubuntu; then
+        apt-get clean
+    else
+        echo "Unsupported Distro: $DISTRO" 1>&2
+        exit 1
+    fi
 }
 
 # Install and configure a quick&dirty docker daemon.
 function install_docker {
-    # Allow for an externally supplied docker binary.
-    if [ -f "/data/docker" ]; then
-        cp /vagrant/docker /usr/bin/docker
-        chmod +x /usr/bin/docker
-    else
+    if is_centos; then
         cat >/etc/yum.repos.d/docker.repo <<-EOF
 [dockerrepo]
 name=Docker Repository
@@ -45,49 +102,37 @@ enabled=1
 gpgcheck=1
 gpgkey=https://yum.dockerproject.org/gpg
 EOF
-        # Pin Docker version to 1.8.2 before including this change
-        # https://github.com/ansible/ansible-modules-core/pull/2258
-        # in some tagged version of Ansible.
-        yum install -y yum-plugin-versionlock
-        yum versionlock add docker-engine-1.8.2-1.el7.centos.*
         # Also upgrade device-mapper here because of:
         # https://github.com/docker/docker/issues/12108
-        yum install -y docker-engine device-mapper
+        # Upgrade lvm2 to get device-mapper installed
+        yum install -y docker-engine lvm2 device-mapper
 
         # Despite it shipping with /etc/sysconfig/docker, Docker is not configured to
         # load it from it's service file.
-        sed -i -r "s,(ExecStart)=(.+),\1=/usr/bin/docker -d --insecure-registry ${REGISTRY} --registry-mirror=http://${REGISTRY}," /usr/lib/systemd/system/docker.service
+        sed -i -r "s|(ExecStart)=(.+)|\1=/usr/bin/docker daemon --insecure-registry ${REGISTRY} --registry-mirror=http://${REGISTRY}|" /usr/lib/systemd/system/docker.service
+        sed -i 's|^MountFlags=.*|MountFlags=shared|' /usr/lib/systemd/system/docker.service
 
-        systemctl daemon-reload
-        systemctl enable docker
-        systemctl start docker
+        usermod -aG docker vagrant
+    elif is_ubuntu; then
+        apt-key adv --keyserver hkp://pgp.mit.edu:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
+        echo "deb https://apt.dockerproject.org/repo ubuntu-wily main" > /etc/apt/sources.list.d/docker.list
+        apt-get update
+        apt-get install -y docker-engine
+        sed -i -r "s,(ExecStart)=(.+),\1=/usr/bin/docker daemon --insecure-registry ${REGISTRY} --registry-mirror=http://${REGISTRY}|" /lib/systemd/system/docker.service
+    else
+        echo "Unsupported Distro: $DISTRO" 1>&2
+        exit 1
     fi
 
-    usermod -aG docker vagrant
-}
-
-function resize_partition {
-    fdisk /dev/vda <<EOF
-n
-p
-
-
-t
-
-8e
-w
-EOF
-    partprobe
-    pvcreate /dev/vda4
-    vgextend VolGroup00 /dev/vda4
-    lvextend /dev/VolGroup00/LogVol00 /dev/vda4
-    resize2fs /dev/VolGroup00/LogVol00
+    systemctl daemon-reload
+    systemctl enable docker
+    systemctl start docker
 }
 
 function configure_kolla {
     # Use local docker registry
-    sed -i -r "s,^[# ]*namespace.+$,namespace = ${REGISTRY}/lokolla," /etc/kolla/kolla-build.conf
-    sed -i -r "s,^[# ]*push.+$,push = True," /etc/kolla/kolla-build.conf
+    sed -i -r "s,^[# ]*namespace *=.+$,namespace = ${REGISTRY}/lokolla," /etc/kolla/kolla-build.conf
+    sed -i -r "s,^[# ]*push *=.+$,push = True," /etc/kolla/kolla-build.conf
     sed -i -r "s,^[# ]*docker_registry:.+$,docker_registry: \"${REGISTRY}\"," /etc/kolla/globals.yml
     sed -i -r "s,^[# ]*docker_namespace:.+$,docker_namespace: \"lokolla\"," /etc/kolla/globals.yml
     sed -i -r "s,^[# ]*docker_insecure_registry:.+$,docker_insecure_registry: \"True\"," /etc/kolla/globals.yml
@@ -98,17 +143,28 @@ function configure_kolla {
 
 # Configure the operator node and install some additional packages.
 function configure_operator {
-    yum install -y git mariadb && yum clean all
-    pip install --upgrade ansible python-openstackclient tox
-
-    pip install ~vagrant/kolla
-
-    # Note: this trickery requires a patched docker binary.
-    if [ "$http_proxy" = "" ]; then
-        su - vagrant sh -c "echo BUILDFLAGS=\\\"--build-env=http_proxy=$http_proxy --build-env=https_proxy=$https_proxy\\\" > ~/kolla/.buildconf"
+    if is_centos; then
+        yum install -y git mariadb
+    elif is_ubuntu; then
+        apt-get install -y git mariadb-client selinux-utils
+    else
+        echo "Unsupported Distro: $DISTRO" 1>&2
+        exit 1
     fi
 
-    cp -r ~vagrant/kolla/etc/kolla/ /etc/kolla
+    pip install --upgrade "ansible<2" python-openstackclient python-neutronclient tox
+
+    pip install ${KOLLA_PATH}
+
+    # Set selinux to permissive
+    if [[ "$(getenforce)" == "Enforcing" ]]; then
+        sed -i -r "s,^SELINUX=.+$,SELINUX=permissive," /etc/selinux/config
+        setenforce permissive
+    fi
+
+    tox -c ${KOLLA_PATH}/tox.ini -e genconfig
+    cp -r ${KOLLA_PATH}/etc/kolla/ /etc/kolla
+    ${KOLLA_PATH}/tools/generate_passwords.py
     mkdir -p /usr/share/kolla
     chown -R vagrant: /etc/kolla /usr/share/kolla
 
@@ -124,37 +180,32 @@ scp_if_ssh=True
 EOF
     chown vagrant: ~vagrant/.ansible.cfg
 
-    # The openrc file.
-    cat > ~vagrant/openrc <<EOF
-export OS_AUTH_URL="http://${SUPPORT_NODE}:35357/v2.0"
-export OS_USERNAME=admin
-export OS_PASSWORD=password
-export OS_TENANT_NAME=admin
-export OS_VOLUME_API_VERSION=2
+    mkdir -p /etc/kolla/config/nova/
+    cat > /etc/kolla/config/nova/nova-compute.conf <<EOF
+[libvirt]
+virt_type=qemu
 EOF
-    chown vagrant: ~vagrant/openrc
-
 
     # Launch a local registry (and mirror) to speed up pulling images.
-    # 0.9.1 is actually the _latest_ tag.
     if [[ ! $(docker ps -a -q -f name=registry) ]]; then
         docker run -d \
             --name registry \
             --restart=always \
-            -p $REGISTRY_PORT:5000 \
+            -p ${REGISTRY_PORT}:5000 \
             -e STANDALONE=True \
             -e MIRROR_SOURCE=https://registry-1.docker.io \
             -e MIRROR_SOURCE_INDEX=https://index.docker.io \
             -e STORAGE_PATH=/var/lib/registry \
             -v /data/host/registry-storage:/var/lib/registry \
-            registry:0.9.1
+            registry:2
     fi
 }
 
 prep_work
 install_docker
 
-if [ "$1" = "operator" ]; then
-    resize_partition
+if [[ "$VM" = "operator" ]]; then
     configure_operator
 fi
+
+cleanup

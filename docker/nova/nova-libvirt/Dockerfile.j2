@@ -1,5 +1,5 @@
-FROM {{ namespace }}/{{ image_prefix }}base:{{ tag }}
-MAINTAINER Kolla Project (https://launchpad.net/kolla)
+FROM {{ namespace }}/{{ image_prefix }}nova-base:{{ tag }}
+MAINTAINER {{ maintainer }}
 
 {% if base_distro in ['centos', 'fedora', 'oraclelinux', 'rhel'] %}
 
@@ -11,7 +11,9 @@ RUN yum -y install \
         libvirt-daemon-config-nwfilter \
         libvirt-daemon-driver-lxc \
         ceph-common \
-    && yum clean all
+    && yum clean all \
+    && usermod -a -G nova qemu
+
 
 {% elif base_distro in ['ubuntu', 'debian'] %}
 
@@ -23,8 +25,11 @@ RUN apt-get install -y --no-install-recommends \
         qemu \
         qemu-block-extra \
         ebtables \
+        xen-utils-4.6 \
     && apt-get clean \
-    && mkdir -p /etc/ceph
+    && mkdir -p /etc/ceph \
+    && rm /etc/libvirt/qemu/networks/default.xml /etc/libvirt/qemu/networks/autostart/default.xml \
+    && usermod -a -G libvirtd nova
 
 {% endif %}
 

@@ -1,21 +1,14 @@
 ---
 - name: Starting ceph-mon container
-  docker:
-    tty: True
-    net: host
-    pull: "{{ docker_pull_policy }}"
-    restart_policy: "{{ docker_restart_policy }}"
-    restart_policy_retry: "{{ docker_restart_policy_retry }}"
-    state: reloaded
-    registry: "{{ docker_registry }}"
-    username: "{{ docker_registry_username }}"
-    password: "{{ docker_registry_password }}"
-    insecure_registry: "{{ docker_insecure_registry }}"
-    name: ceph_mon
-    image: "{{ ceph_mon_image_full }}"
-    volumes: "{{ node_config_directory }}/ceph-mon/:{{ container_config_directory }}/:ro"
-    volumes_from:
-      - "ceph_mon_data"
-    env:
+  kolla_docker:
+    action: "start_container"
+    common_options: "{{ docker_common_options }}"
+    environment:
       KOLLA_CONFIG_STRATEGY: "{{ config_strategy }}"
-  when: inventory_hostname in groups['ceph-mon']
+      HOSTNAME: "{{ hostvars[inventory_hostname]['ansible_' + storage_interface]['ipv4']['address'] }}"
+    image: "{{ ceph_mon_image_full }}"
+    name: "ceph_mon"
+    volumes:
+      - "{{ node_config_directory }}/ceph-mon/:{{ container_config_directory }}/:ro"
+      - "ceph_mon:/var/lib/ceph"
+      - "ceph_mon_config:/etc/ceph"

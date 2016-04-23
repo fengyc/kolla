@@ -1,7 +1,19 @@
 FROM {{ namespace }}/{{ image_prefix }}murano-base:{{ tag }}
-MAINTAINER Kolla Project (https://launchpad.net/kolla)
+MAINTAINER {{ maintainer }}
 
-COPY extend_start.sh /usr/local/bin/kolla_extend_start
-RUN chmod 755 /usr/local/bin/kolla_extend_start
+{% if install_type == 'binary' %}
+    {% if base_distro in ['ubuntu'] %}
+
+RUN apt-get install -y --no-install-recommends \
+        murano-api \
+    && apt-get clean
+
+    {% endif %}
+{% endif %}
+
+COPY extend_start.sh /usr/local/bin/kolla_murano_extend_start
+RUN chmod 755 /usr/local/bin/kolla_murano_extend_start
 
 {{ include_footer }}
+
+USER murano

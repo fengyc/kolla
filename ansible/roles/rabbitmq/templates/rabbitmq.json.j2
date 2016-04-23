@@ -1,5 +1,5 @@
 {
-    "command": "sudo -H -u rabbitmq /usr/sbin/rabbitmq-server",
+    "command": "/usr/sbin/rabbitmq-server",
     "config_files": [
         {
             "source": "{{ container_config_directory }}/rabbitmq-env.conf",
@@ -10,6 +10,12 @@
         {
             "source": "{{ container_config_directory }}/rabbitmq.config",
             "dest": "/etc/rabbitmq/rabbitmq.config",
+            "owner": "rabbitmq",
+            "perm": "0600"
+        },
+        {
+            "source": "{{ container_config_directory }}/rabbitmq_clusterer.config",
+            "dest": "/etc/rabbitmq/rabbitmq_clusterer.config",
             "owner": "rabbitmq",
             "perm": "0600"
         }

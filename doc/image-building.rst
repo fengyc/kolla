@@ -1,5 +1,5 @@
-Image building
-==============
+Building Container Images
+=========================
 
 The ``tools/build.py`` script in this repository is
 responsible for building docker images.
@@ -13,7 +13,7 @@ In general, you will build images like this:
 
     $ tools/build.py
 
-By default, the above command would build all images based on centos image.
+By default, the above command would build all images based on CentOS image.
 
 If you want to change the base distro image, add ``-b``:
 
@@ -63,13 +63,18 @@ following command:
 
     tools/build.py --registry 172.22.2.81:4000 --push
 
-To trigger buid.py to pull images from local registry,
+To trigger build.py to pull images from local registry,
 the Docker configuration needs to be modified. See
 `Docker Insecure Registry Config`_.
 
-The build script reads its configuration from ``/etc/kolla/kolla-build.conf``
-or ``etc/kolla/kolla-build.conf``. This is where to change the default
-settings.
+The build configuration can be customised using a config file, the default
+location being one of ``/etc/kolla/kolla-build.conf`` or
+``etc/kolla/kolla-build.conf``. This file can be generated using the following
+command:
+
+::
+
+    tox -e genconfig
 
 
 Build OpenStack from Source
@@ -88,7 +93,11 @@ You can change it to ``source`` using the following command:
 
 The locations of OpenStack source code are written in
 ``etc/kolla/kolla-build.conf``.
-Now the source type support ``url`` and ``git``. The
+Now the source type supports ``url``, ``git``, and ``local``. The location of
+the ``local`` source type can point to either a directory containing the source
+code or to a tarball of the source. The ``local`` source type permits to make
+the best use of the docker cache.
+
 ``etc/kolla/kolla-build.conf`` looks like:
 
 ::
@@ -101,6 +110,14 @@ Now the source type support ``url`` and ``git``. The
     type = git
     location = https://github.com/openstack/keystone
     reference = stable/kilo
+
+    [heat-base]
+    type = local
+    location = /home/kolla/src/heat
+
+    [ironic-base]
+    type = local
+    location = /tmp/ironic.tar.gz
 
 To build RHEL containers, it is necessary to use the -i (include header)
 feature to include registration with RHN of the container runtime operating
@@ -119,6 +136,43 @@ Then build RHEL containers:
 
     build -b rhel -i ./rhel-include
 
+
+
+Plugin Functionality
+--------------------
+
+.. note::
+
+  The following functionality currently exists only for Neutron. Other
+  services will be made pluggable in Kolla in the near future.
+
+  Plugin functionality is available for the source build type only.
+
+Certain OpenStack services support third party plugins, e.g. Neutron's
+pluggable L2 drivers_.
+
+Kolla supports downloading pip installable archives as part of the build, which
+will then be picked up and installed in the relevant image.
+
+To instruct Kolla to use these, add a section to
+``/etc/kolla/kolla-build.conf`` in the following format:
+
+::
+
+    [<image>-plugin-<plugin-name>]
+
+Where, ``<image>`` is the image that the plugin should be installed into, and
+``<plugin-name>`` is an identifier of your choice.
+
+For example, to install the Cisco L2 plugin for Neutron into the neutron-server
+image, one would add the following block to ``/etc/kolla/kolla-build.conf``:
+
+::
+
+    [neutron-server-plugin-networking-cisco]
+    type = git
+    location = https://github.com/openstack/networking-cisco
+    reference = master
 
 
 Known issues
@@ -225,5 +279,18 @@ Finally, pass them to the build script using the ``-i`` and ``-I`` flags:
 
     tools/build.py -i .header -I .footer
 
+Besides this configuration options, the script will automatically read these
+environment variables. If the host system proxy parameters match the ones
+going to be used, no other input parameters will be needed. These are the
+variables that will be picked up from the user env:
+
+::
+
+    HTTP_PROXY, http_proxy, HTTPS_PROXY, https_proxy, FTP_PROXY,
+    ftp_proxy, NO_PROXY, no_proxy
+
+Also these variables could be overwritten using ``--build-args``, which have
+precedence.
 
 .. _DockerBug: https://github.com/docker/docker/issues/6980
+.. _drivers: https://wiki.openstack.org/wiki/Neutron#Plugins

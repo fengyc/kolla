@@ -1,16 +1,24 @@
 FROM {{ namespace }}/{{ image_prefix }}base:{{ tag }}
-MAINTAINER Kolla Project (https://launchpad.net/kolla)
+MAINTAINER {{ maintainer }}
 
 {% if base_distro in ['centos', 'fedora', 'oraclelinux', 'rhel'] %}
 
-RUN yum -y install memcached \
-    && yum clean all
+{% set user = 'memcached' %}
+RUN yum -y install \
+        memcached \
+    && yum clean all \
+    && usermod -a -G kolla {{ user }}
 
 {% elif base_distro in ['ubuntu', 'debian'] %}
 
-RUN apt-get install -y --no-install-recommends memcached \
-    && apt-get clean
+{% set user = 'memcache' %}
+RUN apt-get install -y --no-install-recommends \
+        memcached \
+    && apt-get clean \
+    && usermod -a -G kolla {{ user }}
 
 {% endif %}
 
 {{ include_footer }}
+
+USER {{ user }}

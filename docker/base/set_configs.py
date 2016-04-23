@@ -12,12 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
+import contextlib
 import json
 import logging
 import os
-from pwd import getpwnam
+import pwd
 import shutil
 import sys
+
+from kazoo import client as kz_client
+from kazoo import exceptions as kz_exceptions
+from six.moves.urllib import parse
 
 
 # TODO(rhallisey): add docstring.
@@ -35,26 +41,85 @@ def validate_config(config):
 
     # Validate config sections
     for data in config.get('config_files', list()):
-        # Verify required keys exist. Only 'source' and 'dest' are
-        # required. 'owner' and 'perm' should user system defaults if not
-        # specified
+        # Verify required keys exist.
         if not data.viewkeys() >= required_keys:
-            LOG.error('Config is missing required keys: {}'.format(data))
+            LOG.error("Config is missing required keys: %s", data)
             sys.exit(1)
 
 
 def validate_source(data):
     source = data.get('source')
 
-    if not os.path.exists(source):
+    if is_zk_transport(source):
+        with zk_connection(source) as zk:
+            exists = zk_path_exists(zk, source)
+    else:
+        exists = os.path.exists(source)
+
+    if not exists:
         if data.get('optional'):
-            LOG.warn('{} does not exist, but is not required'.format(source))
+            LOG.info("%s does not exist, but is not required", source)
             return False
         else:
-            LOG.error('The source to copy does not exist: {}'.format(source))
+            LOG.error("The source to copy does not exist: %s", source)
             sys.exit(1)
 
     return True
+
+
+def is_zk_transport(path):
+    return path.startswith('zk://') or \
+        os.environ.get("KOLLA_ZK_HOSTS") is not None
+
+
+@contextlib.contextmanager
+def zk_connection(url):
+    # support an environment and url
+    # if url, it should be like this:
+    # zk://<address>:<port>/<path>
+
+    zk_hosts = os.environ.get("KOLLA_ZK_HOSTS")
+    if zk_hosts is None:
+        components = parse.urlparse(url)
+        zk_hosts = components.netloc
+    zk = kz_client.KazooClient(hosts=zk_hosts)
+    zk.start()
+    try:
+        yield zk
+    finally:
+        zk.stop()
+
+
+def zk_path_exists(zk, path):
+    try:
+        components = parse.urlparse(path)
+        zk.get(components.path)
+        return True
+    except kz_exceptions.NoNodeError:
+        return False
+
+
+def zk_copy_tree(zk, src, dest):
+    """Recursively copy contents of url_source into dest."""
+    data, stat = zk.get(src)
+
+    if data:
+        dest_path = os.path.dirname(dest)
+        if not os.path.exists(dest_path):
+            LOG.info("Creating dest parent directory: %s", dest_path)
+            os.makedirs(dest_path)
+
+        LOG.info("Copying %s to %s", src, dest)
+        with open(dest, 'w') as df:
+            df.write(data.decode("utf-8"))
+
+    try:
+        children = zk.get_children(src)
+    except kz_exceptions.NoNodeError:
+        return
+    for child in children:
+        zk_copy_tree(zk, os.path.join(src, child),
+                     os.path.join(dest, child))
 
 
 def copy_files(data):
@@ -62,11 +127,16 @@ def copy_files(data):
     source = data.get('source')
 
     if os.path.exists(dest):
-        LOG.info('Removing existing destination: {}'.format(dest))
+        LOG.info("Removing existing destination: %s", dest)
         if os.path.isdir(dest):
             shutil.rmtree(dest)
         else:
             os.remove(dest)
+
+    if is_zk_transport(source):
+        with zk_connection(source) as zk:
+            components = parse.urlparse(source)
+            return zk_copy_tree(zk, components.path, dest)
 
     if os.path.isdir(source):
         source_path = source
@@ -76,20 +146,20 @@ def copy_files(data):
         dest_path = os.path.dirname(dest)
 
     if not os.path.exists(dest_path):
-        LOG.info('Creating dest parent directory: {}'.format(dest_path))
+        LOG.info("Creating dest parent directory: %s", dest_path)
         os.makedirs(dest_path)
 
     if source != source_path:
         # Source is file
-        LOG.info('Copying {} to {}'.format(source, dest))
+        LOG.info("Copying %s to %s", source, dest)
         shutil.copy(source, dest)
     else:
         # Source is a directory
         for src in os.listdir(source_path):
-            LOG.info('Copying {} to {}'.format(
-                os.path.join(source_path, src), dest_path))
+            LOG.info("Copying %s to %s",
+                     os.path.join(source_path, src), dest_path)
 
-            if os.path.isdir(src):
+            if os.path.isdir(os.path.join(source_path, src)):
                 shutil.copytree(os.path.join(source_path, src), dest_path)
             else:
                 shutil.copy(os.path.join(source_path, src), dest_path)
@@ -97,19 +167,14 @@ def copy_files(data):
 
 def set_permissions(data):
     def set_perms(file_, uid, guid, perm):
-        LOG.info('Setting permissions for {}'.format(file_))
+        LOG.info("Setting permissions for %s", file_)
         # Give config file proper perms.
         try:
             os.chown(file_, uid, gid)
-        except OSError as e:
-            LOG.error('While trying to chown {} received error: {}'.format(
-                file_, e))
-            sys.exit(1)
-        try:
             os.chmod(file_, perm)
         except OSError as e:
-            LOG.error('While trying to chmod {} received error: {}'.format(
-                file_, e))
+            LOG.error("Error while setting permissions for %s: %r",
+                      file_, repr(e))
             sys.exit(1)
 
     dest = data.get('dest')
@@ -118,15 +183,13 @@ def set_permissions(data):
 
     # Check for user and group id in the environment.
     try:
-        uid = getpwnam(owner).pw_uid
+        user = pwd.getpwnam(owner)
     except KeyError:
-        LOG.error('The specified user does not exist: {}'.format(owner))
+        LOG.error("The specified user does not exist: %s", owner)
         sys.exit(1)
-    try:
-        gid = getpwnam(owner).pw_gid
-    except KeyError:
-        LOG.error('The specified group does not exist: {}'.format(owner))
-        sys.exit(1)
+
+    uid = user.pw_uid
+    gid = user.pw_gid
 
     # Set permissions on the top level dir or file
     set_perms(dest, uid, gid, perm)
@@ -140,24 +203,43 @@ def set_permissions(data):
 
 
 def load_config():
-    config_file = '/var/lib/kolla/config_files/config.json'
-    LOG.info('Loading config file at {}'.format(config_file))
+    def load_from_env():
+        config_raw = os.environ.get("KOLLA_CONFIG")
+        if config_raw is None:
+            return None
 
-    # Attempt to read config file
-    with open(config_file) as f:
+        # Attempt to read config
         try:
-            config = json.load(f)
+            return json.loads(config_raw)
         except ValueError:
-            LOG.error('Invalid json file found at {}'.format(config_file))
+            LOG.error('Invalid json for Kolla config')
             sys.exit(1)
-        except IOError as e:
-            LOG.error('Could not read file {}. Failed with error {}'.format(
-                config_file, e))
-            sys.exit(1)
+
+    def load_from_file():
+        config_file = '/var/lib/kolla/config_files/config.json'
+        LOG.info("Loading config file at %s", config_file)
+
+        # Attempt to read config file
+        with open(config_file) as f:
+            try:
+                return json.load(f)
+            except ValueError:
+                LOG.error("Invalid json file found at %s", config_file)
+                sys.exit(1)
+            except IOError as e:
+                LOG.error("Could not read file %s: %r", config_file, e)
+                sys.exit(1)
+
+    config = load_from_env()
+    if config is None:
+        config = load_from_file()
 
     LOG.info('Validating config file')
     validate_config(config)
+    return config
 
+
+def copy_config(config):
     if 'config_files' in config:
         LOG.info('Copying service configuration files')
         for data in config['config_files']:
@@ -168,37 +250,81 @@ def load_config():
         LOG.debug('No files to copy found in config')
 
     LOG.info('Writing out command to execute')
-    LOG.debug('Command is: {}'.format(config['command']))
+    LOG.debug("Command is: %s", config['command'])
     # The value from the 'command' key will be written to '/run_command'
     with open('/run_command', 'w+') as f:
         f.write(config['command'])
 
 
 def execute_config_strategy():
-    try:
-        config_strategy = os.environ.get("KOLLA_CONFIG_STRATEGY")
-        LOG.info('Kolla config strategy set to: {}'.format(config_strategy))
-    except KeyError:
-        LOG.error("KOLLA_CONFIG_STRATEGY is not set properly.")
-        sys.exit(1)
+    config_strategy = os.environ.get("KOLLA_CONFIG_STRATEGY")
+    LOG.info("Kolla config strategy set to: %s", config_strategy)
+    config = load_config()
 
     if config_strategy == "COPY_ALWAYS":
-        load_config()
+        copy_config(config)
     elif config_strategy == "COPY_ONCE":
         if os.path.exists('/configured'):
             LOG.info("The config strategy prevents copying new configs")
             sys.exit(0)
         else:
-            load_config()
-            f = open('/configured', 'w+')
-            f.close()
+            copy_config(config)
+            os.mknod('/configured')
     else:
         LOG.error('KOLLA_CONFIG_STRATEGY is not set properly')
         sys.exit(1)
 
 
+def execute_config_check():
+    config = load_config()
+    for config_file in config.get('config_files', {}):
+        source = config_file.get('source')
+        dest = config_file.get('dest')
+        perm = config_file.get('perm')
+        owner = config_file.get('owner')
+        optional = config_file.get('optional', False)
+        if not os.path.exists(dest):
+            if optional:
+                LOG.info('Dest file does not exist, but is optional: %s',
+                         dest)
+                return
+            else:
+                LOG.error('Dest file does not exist and is: %s', dest)
+                sys.exit(1)
+        # check content
+        with open(source) as fp1, open(dest) as fp2:
+            if fp1.read() != fp2.read():
+                LOG.error('The content of source file(%s) and'
+                          ' dest file(%s) are not equal.', source, dest)
+                sys.exit(1)
+        # check perm
+        file_stat = os.stat(dest)
+        actual_perm = oct(file_stat.st_mode)[-4:]
+        if perm != actual_perm:
+            LOG.error('Dest file does not have expected perm: %s, actual: %s',
+                      perm, actual_perm)
+            sys.exit(1)
+        # check owner
+        actual_user = pwd.getpwuid(file_stat.st_uid)
+        if actual_user.pw_name != owner:
+            LOG.error('Dest file does not have expected user: %s, actual: %s ',
+                      owner, actual_user.pw_name)
+            sys.exit(1)
+    LOG.info('The config files are in the expected state')
+
+
 def main():
-    execute_config_strategy()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--check',
+                        action='store_true',
+                        required=False,
+                        help='Check whether the configs changed')
+    conf = parser.parse_args()
+
+    if conf.check:
+        execute_config_check()
+    else:
+        execute_config_strategy()
     return 0
 
 

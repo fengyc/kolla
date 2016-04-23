@@ -1,9 +1,9 @@
 FROM {{ namespace }}/{{ image_prefix }}base:{{ tag }}
-MAINTAINER Kolla Project (https://launchpad.net/kolla)
+MAINTAINER {{ maintainer }}
 
 {% if base_distro in ['centos', 'fedora', 'oraclelinux', 'rhel'] %}
 
-RUN yum install -y \
+RUN yum -y install \
         MariaDB-Galera-server \
         MariaDB-client \
         rsync \
@@ -14,6 +14,7 @@ RUN yum install -y \
         pv \
         tar \
         expect \
+    && yum clean all \
     && rm -rf /var/lib/mysql/*
 
 {% elif base_distro in ['ubuntu', 'debian'] %}
@@ -28,7 +29,15 @@ RUN apt-get install -y --no-install-recommends \
 
 {% endif %}
 
+COPY mariadb_sudoers /etc/sudoers.d/mariadb_sudoers
 COPY extend_start.sh /usr/local/bin/kolla_extend_start
-RUN chmod 755 /usr/local/bin/kolla_extend_start
+COPY security_reset.expect /usr/local/bin/kolla_security_reset
+RUN chmod 755 /usr/local/bin/kolla_extend_start \
+    && chmod 755 /usr/local/bin/kolla_security_reset \
+    && chmod 750 /etc/sudoers.d \
+    && chmod 440 /etc/sudoers.d/mariadb_sudoers \
+    && usermod -a -G kolla mysql
 
 {{ include_footer }}
+
+USER mysql

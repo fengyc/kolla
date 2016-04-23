@@ -1,16 +1,41 @@
 FROM {{ namespace }}/{{ image_prefix }}ceilometer-base:{{ tag }}
-MAINTAINER Kolla Project (https://launchpad.net/kolla)
+MAINTAINER {{ maintainer }}
 
 {% if install_type == 'binary' %}
     {% if base_distro in ['centos', 'fedora', 'oraclelinux', 'rhel'] %}
 
-RUN yum install -y \
+RUN yum -y install \
         openstack-ceilometer-compute \
         python-ceilometerclient \
-        python-pecan \
     && yum clean all
 
+    {% elif base_distro in ['ubuntu', 'debian'] %}
+
+RUN apt-get install -y --no-install-recommends \
+        ceilometer-agent-compute \
+        python-ceilometerclient \
+    && apt-get clean
+
     {% endif %}
+{% elif install_type == 'source' %}
+    {% if base_distro in ['centos', 'fedora', 'oraclelinux', 'rhel'] %}
+
+RUN yum install -y \
+        libvirt-devel \
+    && yum clean all
+
+    {% elif base_distro in ['ubuntu', 'debian'] %}
+
+RUN apt-get install -y --no-install-recommends \
+        libvirt-dev \
+    && apt-get clean
+
+    {% endif %}
+
+RUN /var/lib/kolla/venv/bin/pip --no-cache-dir install --upgrade -c requirements/upper-constraints.txt libvirt-python
+
 {% endif %}
 
 {{ include_footer }}
+
+USER ceilometer

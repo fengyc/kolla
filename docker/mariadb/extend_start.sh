@@ -2,41 +2,42 @@
 
 function bootstrap_db {
     mysqld_safe --wsrep-new-cluster &
-
-    # Waiting for deamon
-    sleep 10
-    expect -c '
-    set timeout 10
-    spawn mysql_secure_installation
-    expect "Enter current password for root (enter for none):"
-    send "\r"
-    expect "Set root password?"
-    send "y\r"
-    expect "New password:"
-    send "'"${DB_ROOT_PASSWORD}"'\r"
-    expect "Re-enter new password:"
-    send "'"${DB_ROOT_PASSWORD}"'\r"
-    expect "Remove anonymous users?"
-    send "y\r"
-    expect "Disallow root login remotely?"
-    send "n\r"
-    expect "Remove test database and access to it?"
-    send "y\r"
-    expect "Reload privilege tables now?"
-    send "y\r"
-    expect eof'
-
+    # Wait for the mariadb server to be "Ready" before starting the security reset with a max timeout
+    TIMEOUT=${DB_MAX_TIMEOUT:-60}
+    while [[ ! -f /var/lib/mysql/mariadb.pid ]]; do
+        if [[ ${TIMEOUT} -gt 0 ]]; then
+            let TIMEOUT-=1
+            sleep 1
+        else
+            exit 1
+        fi
+    done
+    sudo -E kolla_security_reset
     mysql -u root --password="${DB_ROOT_PASSWORD}" -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' IDENTIFIED BY '${DB_ROOT_PASSWORD}' WITH GRANT OPTION;"
     mysql -u root --password="${DB_ROOT_PASSWORD}" -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY '${DB_ROOT_PASSWORD}' WITH GRANT OPTION;"
-    mysqladmin -p"${DB_ROOT_PASSWORD}" shutdown
+    mysqladmin -uroot -p"${DB_ROOT_PASSWORD}" shutdown
 }
 
-chown mysql: /var/lib/mysql
+# Only update permissions if permissions need to be updated
+if [[ $(stat -c %U:%G /var/lib/mysql) != "mysql:mysql" ]]; then
+    sudo chown mysql: /var/lib/mysql
+fi
+
+# Create log directory, with appropriate permissions
+if [[ ! -d "/var/log/kolla/mariadb" ]]; then
+    mkdir -p /var/log/kolla/mariadb
+fi
+if [[ $(stat -c %a /var/log/kolla/mariadb) != "755" ]]; then
+    chmod 755 /var/log/kolla/mariadb
+fi
 
 # This catches all cases of the BOOTSTRAP variable being set, including empty
-if [[ "${!KOLLA_BOOTSTRAP[@]}" ]] && [[ ! -e /var/lib/mysql/cluster.exists ]]; then
-    ARGS="--wsrep-new-cluster"
-    touch /var/lib/mysql/cluster.exists
-    mysql_install_db --user=mysql
+if [[ "${!KOLLA_BOOTSTRAP[@]}" ]]; then
+    mysql_install_db
     bootstrap_db
+    exit 0
+fi
+
+if [[ "${!BOOTSTRAP_ARGS[@]}" ]]; then
+    ARGS="${BOOTSTRAP_ARGS}"
 fi

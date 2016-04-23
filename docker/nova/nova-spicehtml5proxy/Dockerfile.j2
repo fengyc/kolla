@@ -1,11 +1,18 @@
 FROM {{ namespace }}/{{ image_prefix }}nova-base:{{ tag }}
-MAINTAINER Kolla Project (https://launchpad.net/kolla)
+MAINTAINER {{ maintainer }}
 
 {% if install_type == 'binary' %}
     {% if base_distro in ['centos', 'fedora', 'oraclelinux', 'rhel'] %}
 
-RUN echo 'ERROR: The specified distro has no Kolla images to build: "{{ base_distro }}"' \
-    && /bin/false
+RUN yum -y install \
+        openstack-nova-spicehtml5proxy \
+    && yum clean all
+
+    {% elif base_distro in ['ubuntu'] %}
+
+RUN apt-get install -y --no-install-recommends \
+        nova-spiceproxy \
+    && apt-get clean
 
     {% endif %}
 {% elif install_type == 'source' %}
@@ -16,3 +23,5 @@ RUN cd /usr/share && ln -s nova-spicehtml5proxy-source/* spice-html5
 {% endif %}
 
 {{ include_footer }}
+
+USER nova

@@ -1,19 +1,13 @@
 FROM {{ namespace }}/{{ image_prefix }}openstack-base:{{ tag }}
-MAINTAINER Kolla Project (https://launchpad.net/kolla)
+MAINTAINER {{ maintainer }}
 
 {% if install_type == 'binary' %}
-    {% if base_distro in ['centos'] %}
+    {% if base_distro in ['centos', 'fedora', 'oraclelinux'] %}
 
-RUN curl https://copr.fedoraproject.org/coprs/sdake/openstack-magnum/repo/epel-7/sdake-openstack-magnum-epel-7.repo -o /etc/yum.repos.d/sdake-openstack-magnum-epel-7.repo
-
-    {% elif base_distro in ['fedora'] %}
-
-RUN curl https://copr.fedoraproject.org/coprs/sdake/openstack-magnum/repo/fedora-22/sdake-openstack-magnum-fedora-22.repo -o /etc/yum.repos.d/sdake-openstack-magnum-f22.repo
-
-     {% elif base_distro in ['oraclelinux'] %}
-
-RUN echo '{{ install_type }} not yet available for {{ base_distro }}' \
-    && /bin/false
+RUN curl -L https://trunk.rdoproject.org/centos7/current/delorean.repo -o /etc/yum.repos.d/delorean.repo \
+    && yum -y install \
+           openstack-magnum-common \
+    && yum clean all
 
     {% endif %}
 {% elif install_type == 'source' %}
@@ -21,9 +15,15 @@ RUN echo '{{ install_type }} not yet available for {{ base_distro }}' \
 ADD magnum-base-archive /magnum-base-source
 RUN ln -s magnum-base-source/* magnum \
     && useradd --user-group magnum \
-    && pip --no-cache-dir install /magnum \
-    && mkdir -p /etc/magnum /var/log/magnum /home/magnum \
-    && cp -r /magnum/etc/* /etc/magnum/ \
-    && chown -R magnum: /etc/magnum /var/log/magnum /home/magnum
+    && /var/lib/kolla/venv/bin/pip --no-cache-dir install --upgrade -c requirements/upper-constraints.txt /magnum \
+    && mkdir -p /etc/magnum /home/magnum \
+    && cp -r /magnum/etc/magnum/* /etc/magnum \
+    && chown -R magnum: /etc/magnum /home/magnum
 
 {% endif %}
+
+COPY extend_start.sh /usr/local/bin/kolla_extend_start
+
+RUN usermod -a -G kolla magnum \
+    && touch /usr/local/bin/kolla_magnum_extend_start \
+    && chmod 755 /usr/local/bin/kolla_extend_start /usr/local/bin/kolla_magnum_extend_start

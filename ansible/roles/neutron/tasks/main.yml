@@ -1,11 +1,2 @@
 ---
-# enforce ironic usage only with openvswtich
-- include: ironic-check.yml
-
-- include: register.yml
-
-- include: config.yml
-
-- include: bootstrap.yml
-
-- include: start.yml
+- include: "{{ action }}.yml"

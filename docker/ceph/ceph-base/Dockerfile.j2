@@ -1,20 +1,24 @@
 FROM {{ namespace }}/{{ image_prefix }}base:{{ tag }}
-MAINTAINER Kolla Project (https://launchpad.net/kolla)
+MAINTAINER {{ maintainer }}
 
 {% if base_distro in ['centos', 'fedora', 'oraclelinux', 'rhel'] %}
 
 RUN yum -y install \
         ceph \
+        ceph-radosgw \
         parted \
         hdparm \
+        btrfs-progs \
     && yum clean all
 
 {% elif base_distro in ['ubuntu', 'debian'] %}
 
 RUN apt-get install -y --no-install-recommends \
         ceph \
+        radosgw \
         parted \
         hdparm \
+        btrfs-tools \
     && apt-get clean
 
 {% endif %}

@@ -15,6 +15,12 @@ localhost       ansible_connection=local
 
 # You can explicitly specify which hosts run each project by updating the
 # groups in the sections below. Common services are grouped together.
+[kibana:children]
+control
+
+[elasticsearch:children]
+control
+
 [haproxy:children]
 network
 
@@ -22,6 +28,9 @@ network
 control
 
 [rabbitmq:children]
+control
+
+[mongodb:children]
 control
 
 [keystone:children]
@@ -57,10 +66,22 @@ control
 [ceph-mon:children]
 control
 
+[ceph-rgw:children]
+control
+
 [ceph-osd:children]
 storage
 
 [ironic:children]
+control
+
+[magnum:children]
+control
+
+[mistral:children]
+control
+
+[manila:children]
 control
 
 # Additional control implemented here. These groups allow you to control which
@@ -93,11 +114,23 @@ nova
 [nova-scheduler:children]
 nova
 
+[nova-spicehtml5proxy:children]
+nova
+
+[nova-compute-ironic:children]
+nova
+
 # Neutron
 [neutron-server:children]
 neutron
 
-[neutron-agents:children]
+[neutron-dhcp-agent:children]
+neutron
+
+[neutron-l3-agent:children]
+neutron
+
+[neutron-metadata-agent:children]
 neutron
 
 # Cinder
@@ -111,6 +144,23 @@ storage
 cinder
 
 [cinder-volume:children]
+storage
+
+# iSCSI
+[iscsid:children]
+compute
+
+[tgtd:children]
+storage
+
+# Manila
+[manila-api:children]
+manila
+
+[manila-scheduler:children]
+manila
+
+[manila-share:children]
 storage
 
 # Swift
@@ -150,8 +200,25 @@ ironic
 [ironic-conductor:children]
 ironic
 
-[ironic-discoverd:children]
+[ironic-inspector:children]
 ironic
 
 [ironic-pxe:children]
 ironic
+
+# Magnum
+[magnum-api:children]
+magnum
+
+[magnum-conductor:children]
+magnum
+
+# Mistral
+[mistral-api:children]
+mistral
+
+[mistral-executor:children]
+mistral
+
+[mistral-engine:children]
+mistral

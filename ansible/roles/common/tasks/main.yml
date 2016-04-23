@@ -1,4 +1,8 @@
 ---
-- include: config.yml
+- include: "{{ action }}.yml"
+  when: not common_run
 
-- include: start.yml
+- name: Registering common role has run
+  set_fact:
+    common_run: True
+  when: not common_run

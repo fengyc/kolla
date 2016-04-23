@@ -10,12 +10,16 @@ control03
 #control[01:03]     ansible_ssh_user=kolla
 
 # The network nodes are where your l3-agent and loadbalancers will run
-# This can be the same as a a host in the control group
+# This can be the same as a host in the control group
 [network]
 network01
 
 [compute]
 compute01
+
+# When compute nodes and control nodes use different interfaces,
+# you can specify "api_interface" and another interfaces like below:
+#compute01 neutron_external_interface=eth0 api_interface=em1 storage_interface=em1 tunnel_interface=em1
 
 [storage]
 storage01
@@ -23,6 +27,12 @@ storage01
 
 # You can explicitly specify which hosts run each project by updating the
 # groups in the sections below. Common services are grouped together.
+[kibana:children]
+control
+
+[elasticsearch:children]
+control
+
 [haproxy:children]
 network
 
@@ -30,6 +40,9 @@ network
 control
 
 [rabbitmq:children]
+control
+
+[mongodb:children]
 control
 
 [keystone:children]
@@ -68,9 +81,20 @@ control
 [ceph-mon:children]
 control
 
+[ceph-rgw:children]
+control
+
 [ceph-osd:children]
 storage
 
+[magnum:children]
+control
+
+[mistral:children]
+control
+
+[manila:children]
+control
 
 # Additional control implemented here. These groups allow you to control which
 # services run on which hosts at a per-service level.
@@ -102,11 +126,23 @@ nova
 [nova-scheduler:children]
 nova
 
+[nova-spicehtml5proxy:children]
+nova
+
+[nova-compute-ironic:children]
+nova
+
 # Neutron
 [neutron-server:children]
 control
 
-[neutron-agents:children]
+[neutron-dhcp-agent:children]
+neutron
+
+[neutron-l3-agent:children]
+neutron
+
+[neutron-metadata-agent:children]
 neutron
 
 # Cinder
@@ -120,6 +156,23 @@ storage
 cinder
 
 [cinder-volume:children]
+storage
+
+# iSCSI
+[iscsid:children]
+compute
+
+[tgtd:children]
+storage
+
+# Manila
+[manila-api:children]
+manila
+
+[manila-scheduler:children]
+manila
+
+[manila-share:children]
 storage
 
 # Swift
@@ -159,8 +212,25 @@ ironic
 [ironic-conductor:children]
 ironic
 
-[ironic-discoverd:children]
+[ironic-inspector:children]
 ironic
 
 [ironic-pxe:children]
 ironic
+
+# Magnum
+[magnum-api:children]
+magnum
+
+[magnum-conductor:children]
+magnum
+
+# Mistral
+[mistral-api:children]
+mistral
+
+[mistral-executor:children]
+mistral
+
+[mistral-engine:children]
+mistral

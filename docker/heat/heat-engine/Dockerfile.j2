@@ -1,5 +1,5 @@
 FROM {{ namespace }}/{{ image_prefix }}heat-base:{{ tag }}
-MAINTAINER Kolla Project (https://launchpad.net/kolla)
+MAINTAINER {{ maintainer }}
 
 {% if install_type == 'binary' %}
     {% if base_distro in ['centos', 'fedora', 'oraclelinux', 'rhel'] %}
@@ -12,7 +12,15 @@ RUN yum -y install \
         openstack-heat-engine \
     && yum clean all
 
+   {% elif base_distro in ['ubuntu'] %}
+
+RUN apt-get install -y --no-install-recommends \
+        heat-engine \
+    && apt-get clean
+
     {% endif %}
 {% endif %}
 
 {{ include_footer }}
+
+USER heat

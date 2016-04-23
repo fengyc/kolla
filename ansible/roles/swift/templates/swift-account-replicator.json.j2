@@ -1,15 +1,15 @@
 {
-    "command": "/usr/bin/swift-account-replicator /etc/swift/account-replicator.conf --verbose",
+    "command": "swift-account-replicator /etc/swift/account-replicator.conf --verbose",
     "config_files": [
         {
-            "source": "/var/lib/kolla/swift/swift.conf",
-            "dest": "/etc/swift/swift.conf",
+            "source": "/var/lib/kolla/swift/account.ring.gz",
+            "dest": "/etc/swift/account.ring.gz",
             "owner": "swift",
             "perm": "0640"
         },
         {
-            "source": "/var/lib/kolla/swift/account.ring.gz",
-            "dest": "/etc/swift/account.ring.gz",
+            "source": "{{ container_config_directory }}/swift.conf",
+            "dest": "/etc/swift/swift.conf",
             "owner": "swift",
             "perm": "0640"
         },
